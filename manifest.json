@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "unfinished-business",
+	"name": "Unfinished Business",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"description": "Allows you to keep track of unfinished tasks in your daily notes and carry them over to the next daily note.",
+	"author": "Anthony Hill",
+	"authorUrl": "https://github.com/anthonyhi11",
 	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }

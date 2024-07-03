@@ -1,86 +1,48 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
+/**
+ *  TODO
+ * - [ ] Add setting to limit the number of days to search for previous tasks (search 'TODO daysback')
+ * - [ ] Add setting to allow user to specify the format of the date in the daily note (search 'TODO dateformat')
+ * currently, we have it hardcoded to search in ISO format (YYYY-MM-DD), so would require some parsing
+ * probably via a regex match statement or something like that
+ * 
+ */
 
-interface MyPluginSettings {
-	mySetting: string;
+interface UnfinishedBusinessPluginSettings {
+	nameOfSection: string;
+	sectionPrefix: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: UnfinishedBusinessPluginSettings = {
+	nameOfSection: 'Tasks',
+	sectionPrefix: '##',
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class UnfinishedBusinessPlugin extends Plugin {
+	settings: UnfinishedBusinessPluginSettings;
 
 	async onload() {
 		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.addSettingTab(new UnfinishedBusinessPluginSettingsTab(this.app, this));
+		 
+		// once layout is loaded, listen for any new notes created
+ 		this.app.workspace.onLayoutReady(() => {
+			this.app.vault.on('create', async (file: TFile) => {
+				if (this.isTodayNote(file.basename)) {
+					new Notice('Today note created - Generating Unfinished Business');
+					// go find unfinished business in yesterday's daily note
+					const previousTodoList = await this.getPreviousTodoList();
+					// if it exists, copy it to today's note
+					this.app.vault.append(file, previousTodoList)
+				}
+			})
+		})
 	}
 
-	onunload() {
 
-	}
+	onunload() {}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -89,28 +51,74 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	isTodayNote(date: string) {
+		// take in date string and return true if it is today
+		const today = new Date();
+		today.setHours(0, 0, 0, 0);
+		const noteDate = new Date(date);
+		// handle timezone offset
+		noteDate.setMinutes(noteDate.getMinutes() + noteDate.getTimezoneOffset());
+		return today.toDateString() === noteDate.toDateString();
+	}
+
+	async getPreviousTodoList(): Promise<string> {
+		// TODO dateformat this might be the place to add the match statement for the date format
+		const dateFormatRegex = /^\d{4}-\d{2}-\d{2}$/;
+		const dailyNotes = this.app.vault.getMarkdownFiles()
+			.filter(file => dateFormatRegex.test(file.basename))
+			.sort((a, b) => b.basename.localeCompare(a.basename));
+
+		const dateToFindPrevious = new Date();
+		let previousDateFound = null;
+		let i = 0;
+
+		// limit the search to previous 14 days for long vacation? 
+		// TODO daysback make this into a setting for the user to change
+		while (previousDateFound === null && i < 14) {
+			dateToFindPrevious.setDate(dateToFindPrevious.getDate() - 1);
+			// TODO dateformat utilize the date format setting here if implemented
+			const dateToFindPreviousString = dateToFindPrevious.toISOString().split('T')[0];
+			// even if the file doesn't have the section, maybe update this to look for files that have the section...
+			previousDateFound = dailyNotes.find(note => note.basename === dateToFindPreviousString) ?? null;
+			i++;
+		}
+
+		if (previousDateFound === null) {
+			return this.settings.sectionPrefix + ' ' + this.settings.nameOfSection + '\nNo unfinished business found in previous notes';
+		}
+
+		const previousTodoList = await this.buildTodoList(previousDateFound);
+
+
+		return previousTodoList;
+	}
+
+	async buildTodoList(previousDateFound: TFile): Promise<string> {
+		let previousTodoList = '## Tasks\n';
+		const taskSection = this.settings.sectionPrefix + " " + this.settings.nameOfSection;
+		const previousNote = await this.app.vault.read(previousDateFound);
+		const lines = previousNote.split('\n');
+		let inTodoSection = false;
+
+		for (const line of lines) {
+			if (line.startsWith(taskSection)) {
+				inTodoSection = true;
+			} else if (inTodoSection && (line.startsWith('- [ ]') || line.startsWith('\t- [ ]'))) {
+				previousTodoList += line + '\n';
+			} else if (line === "" && inTodoSection) {
+				inTodoSection = false;
+			}
+		}
+
+		return previousTodoList;
+	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class UnfinishedBusinessPluginSettingsTab extends PluginSettingTab {
+	plugin: UnfinishedBusinessPlugin;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App,	plugin: UnfinishedBusinessPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -121,13 +129,24 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('Task Section Name')
+			.setDesc('Set the name for the section where tasks are stored in the daily note.')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('Enter the name of the section')
+				.setValue(this.plugin.settings.nameOfSection)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.nameOfSection = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Section Prefix')
+			.setDesc('Set the prefix for the section where tasks are stored in the daily note. (ex. ## for a second level heading)')
+			.addText(text => text
+				.setPlaceholder('Enter the prefix of the section')
+				.setValue(this.plugin.settings.sectionPrefix)
+				.onChange(async (value) => {
+					this.plugin.settings.sectionPrefix = value;
 					await this.plugin.saveSettings();
 				}));
 	}
